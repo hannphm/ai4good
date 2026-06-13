@@ -1,100 +1,106 @@
-import argparse
 import joblib
+import numpy as np
 import pandas as pd
 
+from xgboost import XGBRegressor
+from sklearn.model_selection import GroupKFold
+from sklearn.metrics import (
+    root_mean_squared_error,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score
+)
+
 import config
-from shap_utils import explain_prediction
+from shap_utils import generate_global_shap
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--patient-id", type=int, required=True)
-    parser.add_argument("--sleep-hours", type=float, required=True)
-    parser.add_argument("--sleep-quality", type=float, required=True)
-    parser.add_argument("--stress-level", type=float, required=True)
-    parser.add_argument("--mood", type=float, required=True)
-    parser.add_argument("--exercise-minutes", type=float, required=True)
-    parser.add_argument("--steps", type=float, required=True)
-    parser.add_argument("--medication-taken", type=int, required=True)
-    parser.add_argument("--water-intake-liters", type=float, required=True)
-    parser.add_argument("--screen-time-hours", type=float, required=True)
-    parser.add_argument("--years-with-condition", type=float, required=True)
-    parser.add_argument("--degenerative", type=int, required=True)
-
-    return parser.parse_args()
+def build_model():
+    return XGBRegressor(
+        n_estimators=config.N_ESTIMATORS,
+        max_depth=config.MAX_DEPTH,
+        learning_rate=config.LEARNING_RATE,
+        subsample=config.SUBSAMPLE,
+        colsample_bytree=config.COLSAMPLE_BYTREE,
+        objective="reg:squarederror",
+        random_state=config.RANDOM_STATE
+    )
 
 
-def load_artifacts():
-    model = joblib.load(config.MODEL_PKL_PATH)
-    feature_columns = joblib.load(config.FEATURE_COLUMNS_PATH)
-    patient_stats = joblib.load(config.PATIENT_STATS_PATH)
-
-    return model, feature_columns, patient_stats
-
-
-def get_patient_baseline(patient_id, patient_stats):
-    if patient_id not in patient_stats.index:
-        raise ValueError(f"Patient ID {patient_id} not found.")
-
-    mean = patient_stats.loc[patient_id, "mean"]
-    std = patient_stats.loc[patient_id, "std"]
-
-    return float(mean), float(std)
+def fill_missing_values(df):
+    for col in df.select_dtypes(include=np.number).columns:
+        df[col] = df[col].fillna(df[col].median())
+    for col in df.select_dtypes(exclude=np.number).columns:
+        df[col] = df[col].fillna("Unknown")
+    return df
 
 
-def build_input(args, feature_columns):
-    data = {
-        "sleep_hours": args.sleep_hours,
-        "sleep_quality": args.sleep_quality,
-        "stress_level": args.stress_level,
-        "mood": args.mood,
-        "exercise_minutes": args.exercise_minutes,
-        "steps": args.steps,
-        "medication_taken": args.medication_taken,
-        "water_intake_liters": args.water_intake_liters,
-        "screen_time_hours": args.screen_time_hours,
-        "years_with_condition": args.years_with_condition,
-        "degenerative": args.degenerative
+def build_patient_stats(df):
+    stats = df.groupby(config.PATIENT_ID_COLUMN)[config.TARGET_COLUMN].agg(["mean", "std"])
+    stats["std"] = stats["std"].fillna(1).replace(0, 1)
+    return stats
+
+
+def evaluate(y_true, y_pred, patient_ids, patient_stats):
+    mean = patient_ids.map(patient_stats["mean"])
+    std = patient_ids.map(patient_stats["std"])
+
+    true_z = (y_true - mean) / std
+    pred_z = (y_pred - mean) / std
+
+    true_flare = true_z >= config.FLARE_Z_THRESHOLD
+    pred_flare = pred_z >= config.FLARE_Z_THRESHOLD
+
+    return {
+        "rmse": root_mean_squared_error(y_true, y_pred),
+        "precision": precision_score(true_flare, pred_flare, zero_division=0),
+        "recall": recall_score(true_flare, pred_flare, zero_division=0),
+        "f1": f1_score(true_flare, pred_flare, zero_division=0),
+        "auc": roc_auc_score(true_flare, pred_z)
     }
-
-    X = pd.DataFrame([data])
-    X = pd.get_dummies(X, drop_first=True)
-    X = X.reindex(columns=feature_columns, fill_value=0)
-
-    return X
-
-
-def predict(model, X, patient_mean, patient_std):
-    if patient_std == 0:
-        patient_std = 1
-
-    predicted_pain = float(model.predict(X)[0])
-    z_score = (predicted_pain - patient_mean) / patient_std
-    flare_up = z_score >= config.FLARE_Z_THRESHOLD
-
-    return predicted_pain, z_score, flare_up
 
 
 def main():
-    args = parse_args()
+    df = pd.read_csv(config.DATA_PATH)
+    df = fill_missing_values(df)
 
-    model, feature_columns, patient_stats = load_artifacts()
-    patient_mean, patient_std = get_patient_baseline(args.patient_id, patient_stats)
+    y = df[config.TARGET_COLUMN]
+    groups = df[config.PATIENT_ID_COLUMN]
+    patient_stats = build_patient_stats(df)
 
-    X = build_input(args, feature_columns)
+    X = df.drop(columns=[c for c in config.DROP_COLUMNS if c in df.columns])
+    X = pd.get_dummies(X, drop_first=True)
 
-    predicted_pain, z_score, flare_up = predict(model, X, patient_mean, patient_std)
-    top_features = explain_prediction(model, X, top_n=3)
+    cv = GroupKFold(n_splits=config.N_SPLITS)
+    results = []
 
-    print(f"Predicted Pain Level: {predicted_pain:.2f}")
-    print(f"Patient Baseline Pain: {patient_mean:.2f}")
-    print(f"Z-Score: {z_score:.2f}")
-    print(f"Flare-up: {'YES' if flare_up else 'NO'}")
+    for train_idx, test_idx in cv.split(X, y, groups):
+        model = build_model()
+        model.fit(X.iloc[train_idx], y.iloc[train_idx])
 
-    print("\nTop Contributors:")
-    for item in top_features:
-        print(f"{item['feature']}: {item['impact']:+.2f}")
+        y_pred = model.predict(X.iloc[test_idx])
+        test_patient_ids = groups.iloc[test_idx]
+
+        results.append(evaluate(y.iloc[test_idx], y_pred, test_patient_ids, patient_stats))
+
+    print("\nCross Validation Results")
+
+    for metric in results[0]:
+        values = [r[metric] for r in results]
+        print(f"{metric.upper():<10} {np.mean(values):.4f}")
+
+    model = build_model()
+    model.fit(X, y)
+
+    joblib.dump(model, config.MODEL_PKL_PATH)
+    model.save_model(config.MODEL_JSON_PATH)
+    joblib.dump(list(X.columns), config.FEATURE_COLUMNS_PATH)
+    joblib.dump(patient_stats, config.PATIENT_STATS_PATH)
+
+    generate_global_shap(model, X)
+
+    print("\nModel saved.")
 
 
 if __name__ == "__main__":

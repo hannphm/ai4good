@@ -66,7 +66,7 @@ def main():
     model.save_model(config.CLASSIFIER_MODEL_JSON_PATH)
     joblib.dump(list(X.columns), config.CLASSIFIER_FEATURE_COLUMNS_PATH)
 
-    generate_global_shap(model, X)
+    generate_global_shap(model, X, prefix="classifier")
 
     print("\nClassifier model saved.")
 

@@ -84,6 +84,7 @@ def main():
         config.REGRESSOR_MODEL_PATH
     )
 
+    model.save_model(config.REGRESSOR_MODEL_JSON_PATH)
     joblib.dump(
         list(X.columns),
         config.REGRESSOR_FEATURE_COLUMNS_PATH
@@ -91,7 +92,8 @@ def main():
 
     generate_global_shap(
         model,
-        X
+        X,
+        prefix="regressor"
     )
 
     print("\nRegressor model saved.")

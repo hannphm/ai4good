@@ -1,16 +1,9 @@
-DATA_PATH = "chronic_pain_training_data_zscore.csv"
-
-TARGET_COLUMN = "pain_level"
+DATA_PATH = "chronic pain training data - chronic_pain_training_data_1.csv"
 
 PATIENT_ID_COLUMN = "patient_id"
 
-FLARE_THRESHOLD = 7
-
 N_SPLITS = 5
-
 RANDOM_STATE = 42
-
-FLARE_Z_THRESHOLD = 0.75
 
 # XGBoost parameters
 N_ESTIMATORS = 300
@@ -19,17 +12,39 @@ LEARNING_RATE = 0.05
 SUBSAMPLE = 0.8
 COLSAMPLE_BYTREE = 0.8
 
-DROP_COLUMNS = [
+# Classifier probability threshold
+CLASSIFICATION_THRESHOLD = 0.5
+
+# Regressor
+REGRESSOR_TARGET_COLUMN = "pain_level"
+
+REGRESSOR_DROP_COLUMNS = [
     "patient_id",
     "date",
     "pain_level",
     "flare_up",
-    "pain_z_score",
-    "patient_mean_pain",
-    "patient_std_pain",
     "sex"
 ]
 
-MODEL_PKL_PATH = "pain_model.pkl"
-MODEL_JSON_PATH = "pain_model.json"
-FEATURE_COLUMNS_PATH = "feature_columns.pkl"
+REGRESSOR_MODEL_PATH = "pain_regressor.pkl"
+REGRESSOR_MODEL_JSON_PATH = "pain_regressor.json"
+REGRESSOR_FEATURE_COLUMNS_PATH = "regressor_feature_columns.pkl"
+
+# Classifier
+CLASSIFIER_TARGET_COLUMN = "flare_up"
+
+CLASSIFIER_DROP_COLUMNS = [
+    "patient_id",
+    "date",
+    "pain_level",
+    "flare_up",
+    "sex"
+]
+
+CLASSIFIER_MODEL_PATH = "flare_classifier.pkl"
+CLASSIFIER_MODEL_JSON_PATH = "flare_classifier.json"
+CLASSIFIER_FEATURE_COLUMNS_PATH = "classifier_feature_columns.pkl"
+
+# SHAP outputs
+REGRESSOR_SHAP_PREFIX = "regressor"
+CLASSIFIER_SHAP_PREFIX = "classifier"

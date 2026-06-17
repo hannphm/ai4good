@@ -1,5 +1,3 @@
-# apriori_analysis.py
-
 import pandas as pd
 
 from mlxtend.frequent_patterns import apriori, association_rules
@@ -29,24 +27,11 @@ def build_basket(df):
 
 def main():
     df = load_data(config.DATA_PATH)
-
     basket = build_basket(df)
+    frequent_itemsets = apriori(basket, min_support=0.01, use_colnames=True)
+    rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=0.5)
 
-    frequent_itemsets = apriori(
-        basket,
-        min_support=0.01,
-        use_colnames=True
-    )
-
-    rules = association_rules(
-        frequent_itemsets,
-        metric="confidence",
-        min_threshold=0.5
-    )
-
-    flare_rules = rules[
-        rules["consequents"].apply(lambda x: "flare_up" in x)
-    ]
+    flare_rules = rules[rules["consequents"].apply(lambda x: "flare_up" in x)]
 
     flare_rules = flare_rules.sort_values(
         ["lift", "confidence"],

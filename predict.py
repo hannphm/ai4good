@@ -1,5 +1,3 @@
-# predict.py
-
 import argparse
 import joblib
 import pandas as pd

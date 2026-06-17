@@ -1,5 +1,3 @@
-# train_classifier.py
-
 import joblib
 import numpy as np
 import matplotlib.pyplot as plt

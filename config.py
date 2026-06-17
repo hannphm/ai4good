@@ -1,4 +1,4 @@
-DATA_PATH = "chronic pain training data - chronic_pain_training_data_1.csv"
+DATA_PATH = "chronic_pain_training_data.csv"
 
 PATIENT_ID_COLUMN = "patient_id"
 
@@ -13,7 +13,7 @@ SUBSAMPLE = 0.8
 COLSAMPLE_BYTREE = 0.8
 
 # Classifier probability threshold
-CLASSIFICATION_THRESHOLD = 0.5
+CLASSIFICATION_THRESHOLD = 0.2
 
 # Regressor
 REGRESSOR_TARGET_COLUMN = "pain_level"

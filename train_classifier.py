@@ -1,9 +1,20 @@
+# train_classifier.py
+
 import joblib
 import numpy as np
+import matplotlib.pyplot as plt
 
 from xgboost import XGBClassifier
 from sklearn.model_selection import GroupKFold
-from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    roc_curve,
+    precision_recall_curve
+)
 
 import config
 from data_utils import load_data, build_features
@@ -29,8 +40,38 @@ def evaluate(y_true, y_prob):
         "precision": precision_score(y_true, y_pred, zero_division=0),
         "recall": recall_score(y_true, y_pred, zero_division=0),
         "f1": f1_score(y_true, y_pred, zero_division=0),
-        "auc": roc_auc_score(y_true, y_prob)
+        "roc_auc": roc_auc_score(y_true, y_prob),
+        "pr_auc": average_precision_score(y_true, y_prob)
     }
+
+
+def save_auc_curves(y_true, y_prob):
+    fpr, tpr, _ = roc_curve(y_true, y_prob)
+    roc_auc = roc_auc_score(y_true, y_prob)
+
+    plt.figure(figsize=(6, 5))
+    plt.plot(fpr, tpr, label=f"ROC AUC = {roc_auc:.3f}")
+    plt.plot([0, 1], [0, 1], linestyle="--", label="Random")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curve")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("classifier_roc_curve.png")
+    plt.close()
+
+    precision, recall, _ = precision_recall_curve(y_true, y_prob)
+    pr_auc = average_precision_score(y_true, y_prob)
+
+    plt.figure(figsize=(6, 5))
+    plt.plot(recall, precision, label=f"PR AUC = {pr_auc:.3f}")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title("Precision-Recall Curve")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("classifier_pr_curve.png")
+    plt.close()
 
 
 def main():
@@ -38,7 +79,7 @@ def main():
 
     X, y, groups = build_features(
         df,
-        target_column="flare_up",
+        target_column=config.CLASSIFIER_TARGET_COLUMN,
         drop_columns=config.CLASSIFIER_DROP_COLUMNS,
         patient_id_column=config.PATIENT_ID_COLUMN
     )
@@ -61,6 +102,9 @@ def main():
 
     model = build_model()
     model.fit(X, y)
+
+    y_prob_full = model.predict_proba(X)[:, 1]
+    save_auc_curves(y, y_prob_full)
 
     joblib.dump(model, config.CLASSIFIER_MODEL_PATH)
     model.save_model(config.CLASSIFIER_MODEL_JSON_PATH)

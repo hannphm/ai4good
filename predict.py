@@ -1,106 +1,117 @@
+# predict.py
+
+import argparse
 import joblib
-import numpy as np
 import pandas as pd
 
-from xgboost import XGBRegressor
-from sklearn.model_selection import GroupKFold
-from sklearn.metrics import (
-    root_mean_squared_error,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score
-)
-
 import config
-from shap_utils import generate_global_shap
+from shap_utils import explain_prediction
+from data_utils import align_features
 
 
-def build_model():
-    return XGBRegressor(
-        n_estimators=config.N_ESTIMATORS,
-        max_depth=config.MAX_DEPTH,
-        learning_rate=config.LEARNING_RATE,
-        subsample=config.SUBSAMPLE,
-        colsample_bytree=config.COLSAMPLE_BYTREE,
-        objective="reg:squarederror",
-        random_state=config.RANDOM_STATE
-    )
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--patient-id", type=int, required=True)
+    parser.add_argument("--flare-threshold", type=float, required=False)
+    parser.add_argument("--sleep-hours", type=float, required=True)
+    parser.add_argument("--sleep-quality", type=float, required=True)
+    parser.add_argument("--stress-level", type=float, required=True)
+    parser.add_argument("--mood", type=float, required=True)
+    parser.add_argument("--exercise-minutes", type=float, required=True)
+    parser.add_argument("--steps", type=float, required=True)
+    parser.add_argument("--medication-taken", type=int, required=True)
+    parser.add_argument("--water-intake-liters", type=float, required=True)
+    parser.add_argument("--screen-time-hours", type=float, required=True)
+    parser.add_argument("--years-with-condition", type=float, required=True)
+    parser.add_argument("--degenerative", type=int, required=True)
+
+    return parser.parse_args()
 
 
-def fill_missing_values(df):
-    for col in df.select_dtypes(include=np.number).columns:
-        df[col] = df[col].fillna(df[col].median())
-    for col in df.select_dtypes(exclude=np.number).columns:
-        df[col] = df[col].fillna("Unknown")
-    return df
+def load_artifacts():
+    regressor = joblib.load(config.REGRESSOR_MODEL_PATH)
+    classifier = joblib.load(config.CLASSIFIER_MODEL_PATH)
+
+    regressor_columns = joblib.load(config.REGRESSOR_FEATURE_COLUMNS_PATH)
+    classifier_columns = joblib.load(config.CLASSIFIER_FEATURE_COLUMNS_PATH)
+
+    return regressor, classifier, regressor_columns, classifier_columns
 
 
-def build_patient_stats(df):
-    stats = df.groupby(config.PATIENT_ID_COLUMN)[config.TARGET_COLUMN].agg(["mean", "std"])
-    stats["std"] = stats["std"].fillna(1).replace(0, 1)
-    return stats
+def get_patient_flare_threshold(patient_id):
+    df = pd.read_csv(config.DATA_PATH)
+    patient_rows = df[df[config.PATIENT_ID_COLUMN] == patient_id]
+
+    if patient_rows.empty:
+        raise ValueError(f"Patient ID {patient_id} not found and no flare threshold was provided.")
+
+    return float(patient_rows["flare_threshold"].iloc[0])
 
 
-def evaluate(y_true, y_pred, patient_ids, patient_stats):
-    mean = patient_ids.map(patient_stats["mean"])
-    std = patient_ids.map(patient_stats["std"])
+def resolve_flare_threshold(args):
+    if args.flare_threshold is not None:
+        return args.flare_threshold
 
-    true_z = (y_true - mean) / std
-    pred_z = (y_pred - mean) / std
+    return get_patient_flare_threshold(args.patient_id)
 
-    true_flare = true_z >= config.FLARE_Z_THRESHOLD
-    pred_flare = pred_z >= config.FLARE_Z_THRESHOLD
 
-    return {
-        "rmse": root_mean_squared_error(y_true, y_pred),
-        "precision": precision_score(true_flare, pred_flare, zero_division=0),
-        "recall": recall_score(true_flare, pred_flare, zero_division=0),
-        "f1": f1_score(true_flare, pred_flare, zero_division=0),
-        "auc": roc_auc_score(true_flare, pred_z)
-    }
+def build_input(args, flare_threshold):
+    return pd.DataFrame([{
+        "sleep_hours": args.sleep_hours,
+        "sleep_quality": args.sleep_quality,
+        "stress_level": args.stress_level,
+        "mood": args.mood,
+        "exercise_minutes": args.exercise_minutes,
+        "steps": args.steps,
+        "medication_taken": args.medication_taken,
+        "water_intake_liters": args.water_intake_liters,
+        "screen_time_hours": args.screen_time_hours,
+        "years_with_condition": args.years_with_condition,
+        "degenerative": args.degenerative,
+        "flare_threshold": flare_threshold
+    }])
+
+
+def predict_pain(regressor, X):
+    return float(regressor.predict(X)[0])
+
+
+def predict_flare(classifier, X):
+    probability = float(classifier.predict_proba(X)[0][1])
+    prediction = probability >= config.CLASSIFICATION_THRESHOLD
+    return probability, prediction
+
+
+def print_top_contributors(title, model, X):
+    print(f"\n{title}")
+
+    for item in explain_prediction(model, X, top_n=3):
+        print(f"{item['feature']}: {item['impact']:+.2f}")
 
 
 def main():
-    df = pd.read_csv(config.DATA_PATH)
-    df = fill_missing_values(df)
+    args = parse_args()
 
-    y = df[config.TARGET_COLUMN]
-    groups = df[config.PATIENT_ID_COLUMN]
-    patient_stats = build_patient_stats(df)
+    regressor, classifier, regressor_columns, classifier_columns = load_artifacts()
 
-    X = df.drop(columns=[c for c in config.DROP_COLUMNS if c in df.columns])
-    X = pd.get_dummies(X, drop_first=True)
+    flare_threshold = resolve_flare_threshold(args)
+    raw_input = build_input(args, flare_threshold)
 
-    cv = GroupKFold(n_splits=config.N_SPLITS)
-    results = []
+    X_regressor = align_features(raw_input, regressor_columns)
+    X_classifier = align_features(raw_input, classifier_columns)
 
-    for train_idx, test_idx in cv.split(X, y, groups):
-        model = build_model()
-        model.fit(X.iloc[train_idx], y.iloc[train_idx])
+    predicted_pain = predict_pain(regressor, X_regressor)
+    flare_probability, flare_prediction = predict_flare(classifier, X_classifier)
 
-        y_pred = model.predict(X.iloc[test_idx])
-        test_patient_ids = groups.iloc[test_idx]
+    print(f"Patient ID: {args.patient_id}")
+    print(f"Patient Flare Threshold: {flare_threshold:.2f}")
+    print(f"Predicted Pain Level: {predicted_pain:.2f}")
+    print(f"Flare-up Probability: {flare_probability:.2%}")
+    print(f"Flare-up: {'YES' if flare_prediction else 'NO'}")
 
-        results.append(evaluate(y.iloc[test_idx], y_pred, test_patient_ids, patient_stats))
-
-    print("\nCross Validation Results")
-
-    for metric in results[0]:
-        values = [r[metric] for r in results]
-        print(f"{metric.upper():<10} {np.mean(values):.4f}")
-
-    model = build_model()
-    model.fit(X, y)
-
-    joblib.dump(model, config.MODEL_PKL_PATH)
-    model.save_model(config.MODEL_JSON_PATH)
-    joblib.dump(list(X.columns), config.FEATURE_COLUMNS_PATH)
-    joblib.dump(patient_stats, config.PATIENT_STATS_PATH)
-
-    generate_global_shap(model, X)
-
-    print("\nModel saved.")
+    print_top_contributors("Top Pain Contributors:", regressor, X_regressor)
+    print_top_contributors("Top Flare-up Contributors:", classifier, X_classifier)
 
 
 if __name__ == "__main__":

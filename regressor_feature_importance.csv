@@ -1,0 +1,50 @@
+feature,importance
+flare_threshold,0.7731919
+medication_taken,0.44462836
+stress_level,0.43893054
+sleep_hours,0.32379884
+barometric_pressure_hpa,0.23539272
+sleep_quality,0.20853229
+condition_Lower Back Pain,0.14359018
+condition_Migraine,0.13720366
+total_exercise_minutes,0.124245755
+mood,0.105194636
+bmi,0.08251439
+humidity_pct,0.059451494
+age,0.03507498
+years_with_condition,0.028429966
+condition_Neuropathy,0.027141297
+condition_Osteoarthritis,0.025576126
+condition_Rheumatoid Arthritis,0.021380505
+intense_exercise_minutes,0.01553006
+temperature_c,0.011965322
+exercise_1_duration,0.0052972194
+water_intake_liters,0.0044525587
+steps_taken,0.004289201
+exercise_2_duration,0.0041184444
+screen_time_hours,0.0034346788
+exercise_3_duration,0.002154449
+exercise_2_Unknown,0.0013552962
+exercise_1_Weight Lifting,0.0013322294
+exercise_1_Unknown,0.00054173317
+exercise_1_Swimming,0.0005066437
+exercise_1_Walking,0.00036576745
+exercise_3_Walking,0.00031780978
+exercise_1_Cycling,0.00028552784
+exercise_1_Physiotherapy,0.00027350205
+exercise_2_Swimming,0.00026795248
+exercise_2_Stretching,0.00021747808
+exercise_2_Walking,0.00019263609
+exercise_1_Stretching,0.00018303207
+exercise_2_Yoga,0.00016762973
+exercise_3_Stretching,0.00013538735
+exercise_2_Cycling,0.0001089163
+exercise_3_Yoga,0.00010483009
+exercise_2_Physiotherapy,6.978054e-05
+exercise_2_Weight Lifting,4.9893428e-05
+exercise_3_Physiotherapy,4.7332454e-05
+exercise_3_Unknown,2.9763703e-05
+exercise_1_Yoga,2.4793833e-05
+exercise_3_Weight Lifting,1.9614034e-05
+exercise_3_Cycling,8.407628e-06
+exercise_3_Swimming,0.0

@@ -11,9 +11,11 @@ from sklearn.metrics import (
     roc_auc_score,
     average_precision_score,
     roc_curve,
-    precision_recall_curve
+    precision_recall_curve,
+    confusion_matrix
 )
 
+import seaborn as sns
 import config
 from data_utils import load_data, build_features
 from shap_utils import generate_global_shap
@@ -72,6 +74,41 @@ def save_auc_curves(y_true, y_prob):
     plt.close()
 
 
+def save_confusion_matrix(y_true, y_prob):
+    y_pred = (
+        y_prob >= config.CLASSIFICATION_THRESHOLD
+    ).astype(int)
+
+    cm = confusion_matrix(
+        y_true,
+        y_pred
+    )
+
+    plt.figure(figsize=(6, 5))
+
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=["No Flare-up", "Flare-up"],
+        yticklabels=["No Flare-up", "Flare-up"]
+    )
+
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.title(
+        f"Confusion Matrix (Threshold={config.CLASSIFICATION_THRESHOLD})"
+    )
+
+    plt.tight_layout()
+
+    plt.savefig(
+        "classifier_confusion_matrix.png"
+    )
+
+    plt.close()
+
 def main():
     df = load_data(config.DATA_PATH)
 
@@ -103,6 +140,7 @@ def main():
 
     y_prob_full = model.predict_proba(X)[:, 1]
     save_auc_curves(y, y_prob_full)
+    save_confusion_matrix(y,y_prob_full)
 
     joblib.dump(model, config.CLASSIFIER_MODEL_PATH)
     model.save_model(config.CLASSIFIER_MODEL_JSON_PATH)

@@ -1,53 +1,62 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import PainScaleModal from "./PainScaleModal";
 
-// model bounds
-const Z_MIN = -1.3443; // feet
-const Z_MAX = 0.6630;  // top of head
-const LEFT_IS_POSITIVE_X = true;
-const FRONT_SIGN = -1;
+/**
+ * PainBodySelector — 3D body map, styled to match the Flarecast dashboard
+ * (cream/navy, card layout). Tap the single-mesh model; the tap location is
+ * classified into a body region. Tunable constants are at the top.
+ */
 
+// ---- tunables (flip / adjust if orientation or size looks off) -------------
+const Z_MIN = -1.3443, Z_MAX = 0.6630; // model height bounds (geometry space)
+const LEFT_IS_POSITIVE_X = true;        // flip if left/right are mirrored
+const FRONT_SIGN = -1;                  // flip if chest/back are swapped
+const MODEL_SCALE = 3.0;                // how tall the figure renders
+
+// ---- palette ----------------------------------------------------------------
+const NAVY = "#12344e", CREAM = "#faf6ee", BORDER = "#ece6d6";
+
+// ---- region scheme (your ML feature columns) -------------------------------
 const REGIONS = [
-  { id: "head_front",  label: "Face / Head (front)", side: "center", group: "head" },
-  { id: "head_back",   label: "Head (back)",         side: "center", group: "head" },
-  { id: "neck",        label: "Neck",                side: "center", group: "neck" },
-  { id: "chest",       label: "Chest",               side: "center", group: "torso" },
-  { id: "upper_back",  label: "Upper back",          side: "center", group: "torso" },
-  { id: "abdomen",     label: "Abdomen",             side: "center", group: "torso" },
-  { id: "lower_back",  label: "Lower back",          side: "center", group: "torso" },
-  { id: "shoulder_l",  label: "Shoulder",            side: "left",   group: "arm" },
-  { id: "shoulder_r",  label: "Shoulder",            side: "right",  group: "arm" },
-  { id: "upper_arm_l", label: "Upper arm",           side: "left",   group: "arm" },
-  { id: "upper_arm_r", label: "Upper arm",           side: "right",  group: "arm" },
-  { id: "forearm_l",   label: "Forearm",             side: "left",   group: "arm" },
-  { id: "forearm_r",   label: "Forearm",             side: "right",  group: "arm" },
-  { id: "hand_l",      label: "Hand",                side: "left",   group: "arm" },
-  { id: "hand_r",      label: "Hand",                side: "right",  group: "arm" },
-  { id: "hip_l",       label: "Hip",                 side: "left",   group: "leg" },
-  { id: "hip_r",       label: "Hip",                 side: "right",  group: "leg" },
-  { id: "thigh_l",     label: "Thigh",               side: "left",   group: "leg" },
-  { id: "thigh_r",     label: "Thigh",               side: "right",  group: "leg" },
-  { id: "knee_l",      label: "Knee",                side: "left",   group: "leg" },
-  { id: "knee_r",      label: "Knee",                side: "right",  group: "leg" },
-  { id: "calf_l",      label: "Lower leg",           side: "left",   group: "leg" },
-  { id: "calf_r",      label: "Lower leg",           side: "right",  group: "leg" },
-  { id: "foot_l",      label: "Foot",                side: "left",   group: "leg" },
-  { id: "foot_r",      label: "Foot",                side: "right",  group: "leg" },
+  { id: "head_front", label: "Face / Head (front)", side: "center", group: "head" },
+  { id: "head_back", label: "Head (back)", side: "center", group: "head" },
+  { id: "neck", label: "Neck", side: "center", group: "neck" },
+  { id: "chest", label: "Chest", side: "center", group: "torso" },
+  { id: "upper_back", label: "Upper back", side: "center", group: "torso" },
+  { id: "abdomen", label: "Abdomen", side: "center", group: "torso" },
+  { id: "lower_back", label: "Lower back", side: "center", group: "torso" },
+  { id: "shoulder_l", label: "Shoulder", side: "left", group: "arm" },
+  { id: "shoulder_r", label: "Shoulder", side: "right", group: "arm" },
+  { id: "upper_arm_l", label: "Upper arm", side: "left", group: "arm" },
+  { id: "upper_arm_r", label: "Upper arm", side: "right", group: "arm" },
+  { id: "forearm_l", label: "Forearm", side: "left", group: "arm" },
+  { id: "forearm_r", label: "Forearm", side: "right", group: "arm" },
+  { id: "hand_l", label: "Hand", side: "left", group: "arm" },
+  { id: "hand_r", label: "Hand", side: "right", group: "arm" },
+  { id: "hip_l", label: "Hip", side: "left", group: "leg" },
+  { id: "hip_r", label: "Hip", side: "right", group: "leg" },
+  { id: "thigh_l", label: "Thigh", side: "left", group: "leg" },
+  { id: "thigh_r", label: "Thigh", side: "right", group: "leg" },
+  { id: "knee_l", label: "Knee", side: "left", group: "leg" },
+  { id: "knee_r", label: "Knee", side: "right", group: "leg" },
+  { id: "calf_l", label: "Lower leg", side: "left", group: "leg" },
+  { id: "calf_r", label: "Lower leg", side: "right", group: "leg" },
+  { id: "foot_l", label: "Foot", side: "left", group: "leg" },
+  { id: "foot_r", label: "Foot", side: "right", group: "leg" },
 ];
 const REGION_BY_ID = Object.fromEntries(REGIONS.map((r) => [r.id, r]));
 const PAIN_TYPES = ["Aching", "Burning", "Stabbing", "Throbbing", "Tingling"];
 
-// Map a tapped point (original geometry coords) to a region id.
 function classifyPoint(p) {
-  const h = (p.z - Z_MIN) / (Z_MAX - Z_MIN);     // 0 = feet, 1 = head
+  const h = (p.z - Z_MIN) / (Z_MAX - Z_MIN);
   const isLeft = LEFT_IS_POSITIVE_X ? p.x > 0 : p.x < 0;
   const S = isLeft ? "l" : "r";
   const front = p.y * FRONT_SIGN >= 0;
   const ax = Math.abs(p.x);
-
-  if (ax > 0.3) {                                 // out to the side -> arm
-    if (h > 0.8)  return `shoulder_${S}`;
+  if (ax > 0.3) {
+    if (h > 0.8) return `shoulder_${S}`;
     if (h > 0.62) return `upper_arm_${S}`;
     if (h > 0.45) return `forearm_${S}`;
     return `hand_${S}`;
@@ -63,29 +72,30 @@ function classifyPoint(p) {
   return `foot_${S}`;
 }
 
-// different colours for intensity — tweak the RAMP array to change them
-const RAMP = ["#facc15", "#fb923c", "#ef4444", "#b91c1c"];
+// ---- intensity -> color (matches the 0–10 pain scale) ----------------------
+const SCALE_COLORS = {
+  0: "#06b6d4", 1: "#10b981", 2: "#22c55e", 3: "#4ade80", 4: "#84cc16",
+  5: "#eab308", 6: "#f97316", 7: "#ea580c", 8: "#dc2626", 9: "#b91c1c", 10: "#7f1d1d",
+};
 function intensityColor(intensity) {
-  const t = Math.min(1, Math.max(0, (intensity - 1) / 9));
-  const seg = t * (RAMP.length - 1);
-  const i = Math.min(RAMP.length - 2, Math.floor(seg));
-  const a = new THREE.Color(RAMP[i]);
-  const b = new THREE.Color(RAMP[i + 1]);
-  return a.lerp(b, seg - i);
+  const level = Math.max(0, Math.min(10, Math.round(intensity)));
+  return new THREE.Color(SCALE_COLORS[level]);
 }
 
 let MARK_SEQ = 0;
 
 export default function PainBodySelector() {
   const mountRef = useRef(null);
-  const outerGroupRef = useRef(null);  
+  const outerGroupRef = useRef(null);
   const markersGroupRef = useRef(null);
-  const targetsRef = useRef([]);        // meshes to raycast against
+  const targetsRef = useRef([]);
   const marksRef = useRef({});
 
-  const [marks, setMarks] = useState({}); // { markId: {regionId,label,side,group,local,intensity,type} }
+  const [marks, setMarks] = useState({});
   const [defaultIntensity, setDefaultIntensity] = useState(5);
-  const [status, setStatus] = useState("loading"); 
+  const [status, setStatus] = useState("loading");
+  const [showScale, setShowScale] = useState(false);
+  const [note, setNote] = useState("");
 
   marksRef.current = marks;
 
@@ -95,7 +105,7 @@ export default function PainBodySelector() {
     setMarks((prev) => ({
       ...prev,
       [id]: { regionId, label: r.label, side: r.side, group: r.group,
-              local: [local.x, local.y, local.z], intensity: defaultIntensity, type: PAIN_TYPES[0] },
+        local: [local.x, local.y, local.z], intensity: defaultIntensity, type: PAIN_TYPES[0] },
     }));
   }, [defaultIntensity]);
 
@@ -105,7 +115,6 @@ export default function PainBodySelector() {
     setMarks((prev) => { const n = { ...prev }; delete n[id]; return n; }), []);
   const clearAll = useCallback(() => setMarks({}), []);
 
-  // model load (once) and interaction setup
   useEffect(() => {
     const mount = mountRef.current;
     const scene = new THREE.Scene();
@@ -117,7 +126,7 @@ export default function PainBodySelector() {
     mount.appendChild(renderer.domElement);
     renderer.domElement.style.cssText = "display:block;position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab;";
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
     const key = new THREE.DirectionalLight(0xffffff, 0.9); key.position.set(2, 4, 5); scene.add(key);
     const fill = new THREE.DirectionalLight(0xffffff, 0.35); fill.position.set(-3, 1, -4); scene.add(fill);
 
@@ -129,14 +138,11 @@ export default function PainBodySelector() {
       (gltf) => {
         const inner = new THREE.Group();
         inner.add(gltf.scene);
-
-  
         let box = new THREE.Box3().setFromObject(inner);
         const s = box.getSize(new THREE.Vector3());
         if (s.z > s.y && s.z >= s.x) inner.rotation.x = -Math.PI / 2;
         else if (s.x > s.y && s.x > s.z) inner.rotation.z = Math.PI / 2;
 
-        // Neutral material + collect click targets
         const targets = [];
         gltf.scene.traverse((o) => {
           if (o.isMesh) {
@@ -146,22 +152,19 @@ export default function PainBodySelector() {
         });
         targetsRef.current = targets;
 
-        // Center at origin + scale to fit, measured AFTER the rotation above
         inner.updateMatrixWorld(true);
         box = new THREE.Box3().setFromObject(inner);
         const center = box.getCenter(new THREE.Vector3());
         const dims = box.getSize(new THREE.Vector3());
         inner.position.sub(center);
         outerGroup.add(inner);
-        outerGroup.scale.setScalar(3.0 / Math.max(dims.x, dims.y, dims.z));
-
+        outerGroup.scale.setScalar(MODEL_SCALE / Math.max(dims.x, dims.y, dims.z));
         setStatus("ready");
       },
       undefined,
       (err) => { console.error("GLB load failed:", err); setStatus("error"); }
     );
 
-    // rotating and marking
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     let dragging = false, moved = false, last = { x: 0, y: 0 };
@@ -188,8 +191,8 @@ export default function PainBodySelector() {
         const hits = raycaster.intersectObjects(targetsRef.current, true);
         if (hits.length) {
           const mesh = hits[0].object;
-          const original = mesh.worldToLocal(hits[0].point.clone()); // -> model geometry coords (z = height)
-          const localInGroup = outerGroup.worldToLocal(hits[0].point.clone()); // for marker placement
+          const original = mesh.worldToLocal(hits[0].point.clone());
+          const localInGroup = outerGroup.worldToLocal(hits[0].point.clone());
           addMark(classifyPoint(original), localInGroup);
         }
       }
@@ -231,7 +234,6 @@ export default function PainBodySelector() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addMark]);
 
-  //Sync marker spheres whenever marks change 
   useEffect(() => {
     const g = markersGroupRef.current;
     if (!g) return;
@@ -241,9 +243,9 @@ export default function PainBodySelector() {
       const m = marks[id];
       const col = intensityColor(m.intensity);
       const mat = new THREE.MeshStandardMaterial({ color: col, emissive: col.clone().multiplyScalar(0.3) });
-      const s = new THREE.Mesh(geo, mat);
-      s.position.set(m.local[0], m.local[1], m.local[2]);
-      g.add(s);
+      const sph = new THREE.Mesh(geo, mat);
+      sph.position.set(m.local[0], m.local[1], m.local[2]);
+      g.add(sph);
     }
   }, [marks]);
 
@@ -251,6 +253,7 @@ export default function PainBodySelector() {
 
   const exportEntry = {
     logged_at: new Date().toISOString(),
+    note: note.trim(),
     regions: Object.values(marks).map((m) => ({
       region_id: m.regionId, label: m.label, side: m.side, group: m.group,
       intensity: m.intensity, pain_type: m.type,
@@ -258,15 +261,27 @@ export default function PainBodySelector() {
   };
   const markIds = Object.keys(marks);
 
-  return (
-    <div className="w-full h-screen overflow-hidden bg-slate-50 text-slate-800 flex flex-col">
-      <header className="px-6 py-4 border-b border-slate-200 bg-white">
-        <h1 className="text-lg font-semibold tracking-tight">Log your pain</h1>
-        <p className="text-sm text-slate-500">Drag to rotate. Tap the body where it hurts to drop a marker.</p>
-      </header>
+  const stepBtn = "w-6 h-6 shrink-0 flex items-center justify-center rounded border text-sm leading-none hover:bg-slate-100";
+  const pill = "rounded-lg border bg-white/90 px-3 py-1.5 text-xs font-semibold hover:bg-white shadow-sm";
 
-      <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-        <div className="relative lg:flex-[3] min-h-[60vh] lg:min-h-0 bg-gradient-to-b from-slate-100 to-slate-200">
+  return (
+    <div className="h-full flex flex-col" style={{ background: CREAM, color: NAVY }}>
+      <div className="flex items-start justify-between gap-4 px-4 sm:px-6 pt-5 pb-3">
+        <div>
+          <h1 className="text-3xl font-extrabold" style={{ color: NAVY }}>Log your pain</h1>
+          <p className="text-sm text-slate-500">Drag to rotate. Tap the body where it hurts to drop a marker.</p>
+        </div>
+        <button onClick={() => setShowScale(true)} style={{ borderColor: BORDER, color: NAVY }}
+          className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border-2 bg-white px-3 py-1.5 text-sm font-semibold hover:bg-slate-50">
+          <span aria-hidden style={{ background: NAVY }} className="inline-flex h-5 w-5 items-center justify-center rounded-full text-white text-xs font-bold">?</span>
+          Pain scale
+        </button>
+      </div>
+
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 px-4 sm:px-6 pb-5">
+        {/* viewport */}
+        <div className="relative lg:flex-[3] min-h-[45vh] lg:min-h-0 rounded-3xl border overflow-hidden"
+          style={{ borderColor: BORDER, background: "linear-gradient(180deg,#ffffff,#eef2f7)" }}>
           <div ref={mountRef} className="absolute inset-0" />
           {status !== "ready" && (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
@@ -274,56 +289,50 @@ export default function PainBodySelector() {
             </div>
           )}
           <div className="absolute top-3 left-3 flex gap-2">
-            <button onClick={() => setView("front")} className="px-3 py-1.5 text-xs font-medium rounded-md bg-white/90 border border-slate-300 hover:bg-white shadow-sm">Front</button>
-            <button onClick={() => setView("back")} className="px-3 py-1.5 text-xs font-medium rounded-md bg-white/90 border border-slate-300 hover:bg-white shadow-sm">Back</button>
+            <button onClick={() => setView("front")} style={{ borderColor: BORDER, color: NAVY }} className={pill + " border"}>Front</button>
+            <button onClick={() => setView("back")} style={{ borderColor: BORDER, color: NAVY }} className={pill + " border"}>Back</button>
           </div>
-          <div className="absolute bottom-3 left-3 flex items-center gap-2 bg-white/90 border border-slate-300 rounded-md px-3 py-1.5 shadow-sm">
+          <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-lg border bg-white/90 px-3 py-1.5 shadow-sm" style={{ borderColor: BORDER }}>
             <span className="text-xs text-slate-500">Default intensity</span>
-            <button type="button" aria-label="Decrease default intensity"
-              onClick={() => setDefaultIntensity((v) => Math.max(1, v - 1))}
-              className="w-6 h-6 flex items-center justify-center rounded border border-slate-300 text-slate-600 hover:bg-slate-100 leading-none">−</button>
-            <input type="range" min={1} max={10} value={defaultIntensity} onChange={(e) => setDefaultIntensity(Number(e.target.value))} className="w-24" />
-            <button type="button" aria-label="Increase default intensity"
-              onClick={() => setDefaultIntensity((v) => Math.min(10, v + 1))}
-              className="w-6 h-6 flex items-center justify-center rounded border border-slate-300 text-slate-600 hover:bg-slate-100 leading-none">+</button>
-            <span className="text-xs font-semibold w-4 text-center">{defaultIntensity}</span>
+            <button onClick={() => setDefaultIntensity((v) => Math.max(1, v - 1))} aria-label="Decrease default intensity" style={{ borderColor: BORDER, color: NAVY }} className={stepBtn}>−</button>
+            <input type="range" min={1} max={10} value={defaultIntensity} onChange={(e) => setDefaultIntensity(Number(e.target.value))} className="w-20" />
+            <button onClick={() => setDefaultIntensity((v) => Math.min(10, v + 1))} aria-label="Increase default intensity" style={{ borderColor: BORDER, color: NAVY }} className={stepBtn}>+</button>
+            <span className="text-xs font-semibold w-4 text-center" style={{ color: NAVY }}>{defaultIntensity}</span>
           </div>
         </div>
 
-        <aside className="lg:flex-[2] border-t lg:border-t-0 lg:border-l border-slate-200 bg-white flex flex-col min-h-0">
-          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-            <span className="font-medium">Markers {markIds.length > 0 && <span className="ml-1 text-slate-400">({markIds.length})</span>}</span>
+        {/* panel */}
+        <aside className="lg:flex-[2] rounded-3xl border bg-white flex flex-col min-h-0" style={{ borderColor: BORDER }}>
+          <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: BORDER }}>
+            <span className="font-bold" style={{ color: NAVY }}>Markers {markIds.length > 0 && <span className="text-slate-400">({markIds.length})</span>}</span>
             {markIds.length > 0 && <button onClick={clearAll} className="text-xs text-slate-500 hover:text-red-600">Clear all</button>}
           </div>
 
           <div className="flex-1 overflow-y-auto min-h-0 px-5 py-3 space-y-3">
             {markIds.length === 0 ? (
-              <p className="text-sm text-slate-400 py-8 text-center">Tap the body to add a pain marker.</p>
+              <p className="py-8 text-center text-sm text-slate-400">Tap the body to add a pain marker.</p>
             ) : markIds.map((id) => {
               const m = marks[id];
               return (
-                <div key={id} className="rounded-lg border border-slate-200 p-3">
+                <div key={id} className="rounded-xl border p-3" style={{ borderColor: BORDER }}>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">
+                    <span className="text-sm font-semibold" style={{ color: NAVY }}>
                       {m.label}{m.side !== "center" && <span className="ml-1.5 text-xs text-slate-400 capitalize">{m.side}</span>}
                     </span>
                     <button onClick={() => removeMark(id)} className="text-slate-400 hover:text-red-600 text-sm leading-none">✕</button>
                   </div>
                   <div className="mt-2 flex items-center gap-2">
                     <span className="text-xs text-slate-500 w-14">Intensity</span>
-                    <button type="button" aria-label="Decrease intensity"
-                      onClick={() => updateMark(id, { intensity: Math.max(1, m.intensity - 1) })}
-                      className="w-6 h-6 shrink-0 flex items-center justify-center rounded border border-slate-300 text-slate-600 hover:bg-slate-100 leading-none">−</button>
+                    <button onClick={() => updateMark(id, { intensity: Math.max(1, m.intensity - 1) })} aria-label="Decrease intensity" style={{ borderColor: BORDER, color: NAVY }} className={stepBtn}>−</button>
                     <input type="range" min={1} max={10} value={m.intensity} onChange={(e) => updateMark(id, { intensity: Number(e.target.value) })} className="flex-1" />
-                    <button type="button" aria-label="Increase intensity"
-                      onClick={() => updateMark(id, { intensity: Math.min(10, m.intensity + 1) })}
-                      className="w-6 h-6 shrink-0 flex items-center justify-center rounded border border-slate-300 text-slate-600 hover:bg-slate-100 leading-none">+</button>
+                    <button onClick={() => updateMark(id, { intensity: Math.min(10, m.intensity + 1) })} aria-label="Increase intensity" style={{ borderColor: BORDER, color: NAVY }} className={stepBtn}>+</button>
                     <span className="text-sm font-semibold w-5 text-center" style={{ color: "#" + intensityColor(m.intensity).getHexString() }}>{m.intensity}</span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {PAIN_TYPES.map((t) => (
                       <button key={t} onClick={() => updateMark(id, { type: t })}
-                        className={"px-2 py-0.5 text-xs rounded-full border " + (m.type === t ? "bg-slate-800 text-white border-slate-800" : "bg-white text-slate-600 border-slate-300 hover:border-slate-400")}>{t}</button>
+                        style={m.type === t ? { background: NAVY, color: "white", borderColor: NAVY } : { borderColor: BORDER, color: NAVY }}
+                        className="rounded-full border px-2 py-0.5 text-xs">{t}</button>
                     ))}
                   </div>
                 </div>
@@ -331,16 +340,28 @@ export default function PainBodySelector() {
             })}
           </div>
 
-          <div className="border-t border-slate-200 p-4">
+          <div className="border-t p-4" style={{ borderColor: BORDER }}>
+            <div className="mb-3">
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Notes (optional)</label>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
+                placeholder="Add notes or describe your pain…"
+                className="w-full rounded-xl border px-3 py-2 text-sm text-slate-700 resize-none focus:outline-none focus:ring-2 focus:ring-slate-300"
+                style={{ borderColor: BORDER }} />
+            </div>
             <details>
               <summary className="text-xs text-slate-500 cursor-pointer select-none">Log entry (what gets saved)</summary>
               <pre className="mt-2 text-[11px] leading-snug bg-slate-900 text-slate-100 rounded-md p-3 overflow-x-auto max-h-48">{JSON.stringify(exportEntry, null, 2)}</pre>
             </details>
             <button disabled={markIds.length === 0} onClick={() => console.log("SAVE", exportEntry)}
-              className="mt-3 w-full py-2 rounded-md bg-slate-800 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed">Save entry</button>
+              style={{ background: NAVY }}
+              className="mt-3 w-full py-2 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
+              Save entry
+            </button>
           </div>
         </aside>
       </div>
+
+      <PainScaleModal open={showScale} onClose={() => setShowScale(false)} />
     </div>
   );
 }
